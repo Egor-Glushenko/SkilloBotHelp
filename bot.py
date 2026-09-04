@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import os
 
@@ -104,6 +105,13 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
 
 def main() -> None:
     token, admin_chat_id = _require_config()
+    # Python 3.14 no longer guarantees a current loop in the main thread.
+    # python-telegram-bot expects one to exist before run_polling() starts.
+    try:
+        asyncio.get_event_loop()
+    except RuntimeError:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+
     app = Application.builder().token(token).build()
     app.bot_data["admin_chat_id"] = admin_chat_id
 
