@@ -1,14 +1,11 @@
 import asyncio
 import logging
 import os
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 from dotenv import load_dotenv
 from telegram import Update
 from telegram.constants import ParseMode
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
-
 
 load_dotenv()
 
@@ -18,18 +15,11 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "").strip()
 PORT = int(os.getenv("PORT", "10000"))
-
-
-def _require_config() -> tuple[str, int]:
-    if not BOT_TOKEN:
-        raise RuntimeError("BOT_TOKEN is not set")
-    if not ADMIN_CHAT_ID:
-        raise RuntimeError("ADMIN_CHAT_ID is not set")
-    return BOT_TOKEN, int(ADMIN_CHAT_ID)
+# Render сам выдаёт URL, но лучше указать явно
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()  # например: https://твой-сервис.onrender.com
 
 
 def _user_label(update: Update) -> str:
@@ -42,9 +32,7 @@ def _user_label(update: Update) -> str:
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    await update.message.reply_text(
-        "Привет! Напиши сюда сообщение, и оно придет админу.",
-    )
+    await update.message.reply_text("Привет! Напиши сюда сообщение, и оно придет админу.")
 
 
 async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -52,9 +40,7 @@ async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     admin_chat_id = context.application.bot_data["admin_chat_id"]
-    user = update.effective_user
     label = _user_label(update)
-
     header = f"<b>Новое сообщение от пользователя</b>\n<b>От:</b> {label}"
 
     if update.message.text:
@@ -67,32 +53,24 @@ async def handle_feedback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
             parse_mode=ParseMode.HTML,
         )
     elif update.message.caption and (
-        update.message.photo
-        or update.message.document
-        or update.message.video
-        or update.message.audio
-        or update.message.voice
-        or update.message.sticker
+        update.message.photo or update.message.document
+        or update.message.video or update.message.audio
+        or update.message.voice or update.message.sticker
     ):
-        caption = update.message.caption
         await context.bot.send_message(
             chat_id=admin_chat_id,
-            text=f"{header}\n\n<b>Подпись:</b>\n{caption}",
+            text=f"{header}\n\n<b>Подпись:</b>\n{update.message.caption}",
             parse_mode=ParseMode.HTML,
         )
         await _forward_content(update, context, admin_chat_id)
     else:
         await _forward_content(update, context, admin_chat_id)
-        await context.bot.send_message(
-            chat_id=admin_chat_id,
-            text=header,
-            parse_mode=ParseMode.HTML,
-        )
+        await context.bot.send_message(chat_id=admin_chat_id, text=header, parse_mode=ParseMode.HTML)
 
     await update.message.reply_text("Спасибо! Сообщение отправлено.")
 
 
-async def _forward_content(update: Update, context: ContextTypes.DEFAULT_TYPE, admin_chat_id: int) -> None:
+async def _forward_content(update, context, admin_chat_id):
     if not update.message:
         return
     await context.bot.copy_message(
@@ -106,51 +84,36 @@ async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE) -> N
     logger.exception("Unhandled error: %s", context.error)
 
 
-class _HealthHandler(BaseHTTPRequestHandler):
-    def do_GET(self) -> None:
-        if self.path in {"/", "/healthz"}:
-            body = b"ok"
-            self.send_response(200)
-            self.send_header("Content-Type", "text/plain; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-            return
-
-        self.send_response(404)
-        self.end_headers()
-
-    def log_message(self, format: str, *args: object) -> None:
-        return
-
-
-def _start_health_server() -> None:
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), _HealthHandler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    logger.info("Health server started on port %s", PORT)
-
-
 def main() -> None:
-    token, admin_chat_id = _require_config()
-    # Python 3.14 no longer guarantees a current loop in the main thread.
-    # python-telegram-bot expects one to exist before run_polling() starts.
+    if not BOT_TOKEN:
+        raise RuntimeError("BOT_TOKEN is not set")
+    if not ADMIN_CHAT_ID:
+        raise RuntimeError("ADMIN_CHAT_ID is not set")
+    if not WEBHOOK_URL:
+        raise RuntimeError("WEBHOOK_URL is not set")
+
     try:
         asyncio.get_event_loop()
     except RuntimeError:
         asyncio.set_event_loop(asyncio.new_event_loop())
 
-    _start_health_server()
-
-    app = Application.builder().token(token).build()
-    app.bot_data["admin_chat_id"] = admin_chat_id
+    app = Application.builder().token(BOT_TOKEN).build()
+    app.bot_data["admin_chat_id"] = int(ADMIN_CHAT_ID)
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, handle_feedback))
     app.add_error_handler(error_handler)
 
-    logger.info("Bot started")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    logger.info("Bot starting in webhook mode on port %s", PORT)
+    # run_webhook сам поднимает HTTP-сервер и обрабатывает /webhook
+    app.run_webhook(
+        listen="0.0.0.0",
+        port=PORT,
+        url_path="webhook",
+        webhook_url=f"{WEBHOOK_URL}/webhook",
+        drop_pending_updates=True,
+        allowed_updates=Update.ALL_TYPES,
+    )
 
 
 if __name__ == "__main__":
