@@ -18,8 +18,7 @@ logger = logging.getLogger(__name__)
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 ADMIN_CHAT_ID = os.getenv("ADMIN_CHAT_ID", "").strip()
 PORT = int(os.getenv("PORT", "10000"))
-# Render сам выдаёт URL, но лучше указать явно
-WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()  # например: https://твой-сервис.onrender.com
+WEBHOOK_URL = os.getenv("WEBHOOK_URL", "").strip()
 
 
 def _user_label(update: Update) -> str:
